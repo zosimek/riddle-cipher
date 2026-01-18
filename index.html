@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="pl">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Zaszyfrowany prezent</title>
+  <title>Encrypted Message</title>
+
   <style>
     :root { --letter-gap: 0.55em; }
 
@@ -34,7 +35,8 @@
 
     .success{
       color:#9dffb0;
-      text-shadow: 0 0 8px rgba(157,255,176,0.8), 0 0 18px rgba(157,255,176,0.6);
+      text-shadow: 0 0 8px rgba(157,255,176,0.8),
+                   0 0 18px rgba(157,255,176,0.6);
     }
 
     .status{
@@ -47,175 +49,186 @@
     .status.show{ opacity:0.9; }
 
     .alpha{
-      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+      font-family:ui-monospace,monospace;
       font-size:clamp(16px,2.2vw,26px);
       letter-spacing:var(--letter-gap);
       white-space:nowrap;
       margin:12px 0;
-      opacity:0.95;
     }
 
     .controls{
       display:inline-flex;
       gap:10px;
-      align-items:center;
-      justify-content:center;
       margin-top:8px;
     }
 
     button{
-      appearance:none;
+      background:rgba(255,255,255,0.08);
       border:1px solid rgba(255,255,255,0.18);
-      background:rgba(255,255,255,0.06);
       color:inherit;
-      padding:10px 12px;
+      padding:10px 14px;
       border-radius:12px;
-      font-size:16px;
       cursor:pointer;
-      transition:transform 0.05s ease, background 0.15s ease;
-      user-select:none;
     }
-    button:hover{ background:rgba(255,255,255,0.10); }
-    button:active{ transform:translateY(1px); }
 
     .hint{
       margin-top:10px;
       font-size:13px;
       opacity:0.75;
     }
-
-    @media (max-width:420px){
-      :root{ --letter-gap:0.38em; }
-    }
   </style>
 </head>
 
 <body>
-  <div class="wrap" role="application">
-    <div class="line1" id="decoded">_____</div>
-    <div class="status" id="status">✓ OK</div>
+<div class="wrap">
+  <div class="line1" id="decoded">_____</div>
+  <div class="status" id="status">✓ CORRECT</div>
 
-    <div class="alpha" id="alphaStatic"></div>
-    <div class="alpha" id="alphaShifted"></div>
+  <div class="alpha" id="alphaStatic"></div>
+  <div class="alpha" id="alphaShifted"></div>
 
-    <div class="controls">
-      <button id="left">←</button>
-      <button id="right">→</button>
-    </div>
-
-    <div class="hint">Przesuwaj dolny alfabet (← / →).</div>
+  <div class="controls">
+    <button id="left">←</button>
+    <button id="right">→</button>
   </div>
 
-  <script>
-    const alphabet = "abcdefghijklmnopqrstuvwxyz".split("");
+  <div class="hint">Shift the bottom alphabet (← / →)</div>
+</div>
 
-    const decodedEl = document.getElementById("decoded");
-    const statusEl  = document.getElementById("status");
-    const staticEl  = document.getElementById("alphaStatic");
-    const shiftedEl = document.getElementById("alphaShifted");
-    const leftBtn   = document.getElementById("left");
-    const rightBtn  = document.getElementById("right");
+<script>
+/*********************************************************
+ * CONFIGURATION – EDIT ONLY THESE VALUES
+ *********************************************************/
+const PLAINTEXT = "lego bonsai";   // message to encrypt
+const SHIFT = 11;                 // Caesar shift
+const ALPHABET_MODE = "standard"; // "standard" or "pl"
+/*********************************************************/
 
-    // "lego bonsai" zaszyfrowane przesunięciem +11
-    const cipherText = "wprz mzydlt";
+/* Available alphabets */
+const ALPHABETS = {
+  standard: "abcdefghijklmnopqrstuvwxyz",
+  pl: "aąbcćdeęfghijklłmnńoópqrsśtuvwxyzźż"
+};
 
-    let current = [...alphabet];
-    let shiftCount = 0;          // 0–25
-    let wasSuccess = false;      // żeby klik zagrał tylko przy "wejściu" w +11
+const alphabet = ALPHABETS[ALPHABET_MODE].split("");
+const N = alphabet.length;
 
-    // --- Subtelny klik bez plików audio (Web Audio API) ---
-    let audioCtx = null;
+/* Elements */
+const decodedEl = document.getElementById("decoded");
+const statusEl  = document.getElementById("status");
+const staticEl  = document.getElementById("alphaStatic");
+const shiftedEl = document.getElementById("alphaShifted");
 
-    function ensureAudio() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      // niektóre przeglądarki startują w "suspended" dopóki nie ma interakcji
-      if (audioCtx.state === "suspended") audioCtx.resume();
+/* Normalize shift */
+const TARGET_SHIFT = ((SHIFT % N) + N) % N;
+
+/* Caesar encryption */
+function encrypt(text, shift) {
+  const s = ((shift % N) + N) % N;
+  let result = "";
+
+  for (const ch of text) {
+    const lower = ch.toLowerCase();
+    const index = alphabet.indexOf(lower);
+
+    if (index === -1) {
+      result += ch;
+      continue;
     }
 
-    function playClick() {
-      // Krótki "klik": bardzo krótki impuls + szybkie wygaszenie
-      ensureAudio();
+    const enc = alphabet[(index + s) % N];
+    result += (ch === lower) ? enc : enc.toUpperCase();
+  }
+  return result;
+}
 
-      const t = audioCtx.currentTime;
+/* Encrypted message */
+const CIPHER_TEXT = encrypt(PLAINTEXT, TARGET_SHIFT);
 
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      const filter = audioCtx.createBiquadFilter();
+/* Interactive state */
+let currentAlphabet = [...alphabet];
+let currentShift = 0;
+let wasCorrect = false;
 
-      // Ustawienia kliknięcia (subtelne)
-      osc.type = "square";
-      osc.frequency.setValueAtTime(900, t);
+/* Render alphabet */
+function render(el, arr) {
+  el.textContent = arr.join("");
+}
 
-      filter.type = "highpass";
-      filter.frequency.setValueAtTime(600, t);
+/* Decode using current alphabet */
+function decode() {
+  let output = "";
 
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.04, t + 0.005); // szybki atak
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06); // szybkie wygaszenie
+  for (const ch of CIPHER_TEXT) {
+    const lower = ch.toLowerCase();
+    const index = alphabet.indexOf(lower);
 
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(audioCtx.destination);
-
-      osc.start(t);
-      osc.stop(t + 0.07);
-    }
-    // -------------------------------------------------------
-
-    function renderAlpha(el, arr){
-      el.textContent = arr.join("");
+    if (index === -1) {
+      output += ch;
+      continue;
     }
 
-    function decode(){
-      let out = "";
-      for(const ch of cipherText){
-        if(ch === " "){ out += " "; continue; }
-        const idx = alphabet.indexOf(ch);
-        out += idx === -1 ? ch : current[idx];
-      }
-      decodedEl.textContent = out.toUpperCase();
+    const plain = currentAlphabet[index];
+    output += (ch === lower) ? plain : plain.toUpperCase();
+  }
 
-      const isSuccess = shiftCount === 11;
+  decodedEl.textContent = output.toUpperCase();
 
-      // trigger wizualny
-      decodedEl.classList.toggle("success", isSuccess);
-      statusEl.classList.toggle("show", isSuccess);
+  const success = currentShift === TARGET_SHIFT;
+  decodedEl.classList.toggle("success", success);
+  statusEl.classList.toggle("show", success);
 
-      // trigger dźwiękowy tylko przy wejściu w sukces
-      if (isSuccess && !wasSuccess) {
-        playClick();
-      }
-      wasSuccess = isSuccess;
-    }
+  if (success && !wasCorrect) clickSound();
+  wasCorrect = success;
+}
 
-    function shiftAlphabet(dir){
-      if(dir === 1){
-        current.unshift(current.pop());
-        shiftCount = (shiftCount + 1) % 26;
-      } else {
-        current.push(current.shift());
-        shiftCount = (shiftCount + 25) % 26;
-      }
-      renderAlpha(shiftedEl, current);
-      decode();
-    }
+/* Shift alphabet */
+function shiftAlphabet(dir) {
+  if (dir === 1) {
+    currentAlphabet.unshift(currentAlphabet.pop());
+    currentShift = (currentShift + 1) % N;
+  } else {
+    currentAlphabet.push(currentAlphabet.shift());
+    currentShift = (currentShift + N - 1) % N;
+  }
 
-    // init
-    renderAlpha(staticEl, alphabet);
-    renderAlpha(shiftedEl, current);
-    decode();
+  render(shiftedEl, currentAlphabet);
+  decode();
+}
 
-    // Interakcje (zapewniają "user gesture" dla audio)
-    leftBtn.addEventListener("click", () => shiftAlphabet(-1));
-    rightBtn.addEventListener("click", () => shiftAlphabet(1));
+/* Simple click sound */
+let audioCtx;
+function clickSound() {
+  if (!audioCtx) audioCtx = new AudioContext();
+  const t = audioCtx.currentTime;
 
-    window.addEventListener("keydown", e => {
-      if(e.key === "ArrowLeft")  shiftAlphabet(-1);
-      if(e.key === "ArrowRight") shiftAlphabet(1);
-    });
-  </script>
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.frequency.value = 900;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.04, t + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.07);
+}
+
+/* Init */
+render(staticEl, alphabet);
+render(shiftedEl, currentAlphabet);
+decode();
+
+/* Controls */
+document.getElementById("left").onclick  = () => shiftAlphabet(-1);
+document.getElementById("right").onclick = () => shiftAlphabet(1);
+
+window.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft")  shiftAlphabet(-1);
+  if (e.key === "ArrowRight") shiftAlphabet(1);
+});
+</script>
 </body>
 </html>
-
